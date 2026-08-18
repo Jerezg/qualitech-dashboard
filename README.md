@@ -78,6 +78,27 @@ com indicadores de headcount que complementam os de diárias/WO. Sem esse
 arquivo, essa seção fica desabilitada e o resto do dashboard funciona
 normalmente.
 
+## 3.1. Base de Escalas & Embarques — opcional
+
+Se o arquivo `Relatório Mensal de Eventos*.xlsx` (dobras, AFI/folga e
+ociosidade/STB por funcionário) estiver na mesma pasta sincronizada, o app
+também encontra ele sozinho (procura por "eventos", "embarque" ou "escala"
+no nome) e libera a aba **"Escalas & Embarques"**, com:
+
+- KPIs do mês de referência: efetivo, diárias embarcadas (regular + dobra),
+  ociosidade/standby, dobras (embarque extra), AFI (folga indenizada) e
+  quantidade de funcionários em STB.
+- Evolução mensal de diárias × ociosidade e de dobras × AFI.
+- Composição do mix de eventos do mês (donut) e concentração por família
+  de função (INSPETOR, PINTOR, MONTADOR etc.).
+- Rankings Top 15 de maior ociosidade/STB, mais dobras e mais AFI, além das
+  observações/justificativas registradas pela liderança.
+- Base completa por funcionário, com dobras/AFI/ociosidade acumulados no
+  período coberto pela planilha.
+
+Sem esse arquivo, a aba fica desabilitada e o resto do dashboard funciona
+normalmente.
+
 ## 4. Apontar para os seus dados
 
 Na barra lateral, o campo **"Pasta sincronizada (OneDrive/SharePoint)"** já
@@ -111,9 +132,11 @@ C:\Users\Jorge Gonçalves\OneDrive - Qualitech Inspeção, Reparo e Manutenção
 Na barra lateral, em **Filtros**, é possível recortar os indicadores por
 Coordenador, Cliente, Tipo de Contrato (Fixa/Variável/Spot) e Tipo de
 Serviço. Os filtros afetam as diárias, ordens de serviço e os gráficos/
-tabelas de composição; os 4 indicadores de topo (Man-days Realizados,
-Utilização, Backlog, SISPAT) refletem sempre o total consolidado do mês,
-por virem de abas-resumo da planilha.
+tabelas de composição na aba **Performance Operacional**; os 4 indicadores
+de topo (Man-days Realizados, Utilização, Backlog, SISPAT) refletem sempre
+o total consolidado do mês, por virem de abas-resumo da planilha. As abas
+**Recursos & Pessoas** e **Escalas & Embarques** também não são afetadas
+por esses filtros — cada uma reflete o total da sua própria base de dados.
 
 ## 7. Estrutura do projeto
 
@@ -122,6 +145,7 @@ qualitech_app/
 ├── app.py                  → aplicação Streamlit (layout, gráficos, filtros)
 ├── data.py                 → leitura e cálculo dos indicadores de diárias/WO
 ├── workforce.py            → leitura e cálculo dos indicadores de RH/efetivo
+├── embarques.py            → leitura e cálculo dos indicadores de escalas/embarques
 ├── Iniciar_Dashboard.bat   → atalho p/ Windows: dê duplo clique p/ rodar o App
 ├── requirements.txt        → dependências Python
 ├── .streamlit/

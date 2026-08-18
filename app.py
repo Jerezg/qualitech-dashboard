@@ -9,9 +9,9 @@ Claude gerar um HTML novo.
 Layout e padrão visual espelham o dashboard HTML de referência
 (Qualitech_Dashboard_Performance_Ago2026.html): mesma paleta de marca,
 mesmo cabeçalho ("brandbar"), mesmos cartões de KPI, painéis com título +
-descrição. Duas abas — "Performance Operacional" (diárias/WO) e "Recursos
-& Pessoas" (efetivo/RH) — para não exigir rolar a página inteira para
-alternar entre os dois assuntos.
+descrição. Três abas — "Performance Operacional" (diárias/WO), "Recursos
+& Pessoas" (efetivo/RH) e "Escalas & Embarques" (dobras/AFI/ociosidade) —
+para não exigir rolar a página inteira para alternar entre os assuntos.
 
 Rodar localmente:
     pip install -r requirements.txt
@@ -33,6 +33,11 @@ from workforce import (
     WorkforceData,
     list_available_workforce_workbooks,
     load_workforce_data,
+)
+from embarques import (
+    EmbarquesData,
+    list_available_embarques_workbooks,
+    load_embarques_data,
 )
 
 # --------------------------------------------------------------------------- #
@@ -326,6 +331,18 @@ def load_workforce(path: str) -> WorkforceData | None:
     return _load_wf(path, mtime)
 
 
+@st.cache_data(show_spinner="Lendo base de Escalas & Embarques…")
+def _load_emb(path: str, mtime: float) -> EmbarquesData:
+    return load_embarques_data(path)
+
+
+def load_embarques(path: str) -> EmbarquesData | None:
+    if not path or not os.path.isfile(path):
+        return None
+    mtime = os.path.getmtime(path)
+    return _load_emb(path, mtime)
+
+
 # --------------------------------------------------------------------------- #
 # Sidebar — fonte de dados, filtros, atualização
 # --------------------------------------------------------------------------- #
@@ -385,6 +402,25 @@ with st.sidebar:
             st.caption("Opcional — habilita a seção *Recursos & Pessoas*. Procurado na mesma "
                        "pasta acima, em arquivos com 'ativos' ou 'planejamento' no nome.")
 
+    st.markdown("**Base de Escalas & Embarques**")
+    emb_workbooks = list_available_embarques_workbooks(folder)
+    chosen_emb_path = None
+    if emb_workbooks:
+        emb_labels = [os.path.relpath(w, folder) for w in emb_workbooks]
+        emb_idx = st.selectbox("Arquivo de Escalas", options=range(len(emb_workbooks)),
+                                format_func=lambda i: emb_labels[i], key="emb_select")
+        chosen_emb_path = emb_workbooks[emb_idx]
+    else:
+        emb_uploaded = st.file_uploader("Ou envie o Relatório Mensal de Eventos*.xlsx", type=["xlsx"], key="emb_uploader")
+        if emb_uploaded is not None:
+            tmp_emb_path = os.path.join("/tmp", emb_uploaded.name)
+            with open(tmp_emb_path, "wb") as f:
+                f.write(emb_uploaded.getbuffer())
+            chosen_emb_path = tmp_emb_path
+        else:
+            st.caption("Opcional — habilita a seção *Escalas & Embarques*. Procurado na mesma "
+                       "pasta acima, em arquivos com 'eventos', 'embarque' ou 'escala' no nome.")
+
     st.divider()
     c1, c2 = st.columns(2)
     with c1:
@@ -398,12 +434,15 @@ with st.sidebar:
 
     data = load_data(chosen_path) if chosen_path else None
     data_wf = load_workforce(chosen_wf_path) if chosen_wf_path else None
+    data_emb = load_embarques(chosen_emb_path) if chosen_emb_path else None
 
     if data is not None:
         st.caption(f"📄 {os.path.basename(data.path)}")
         st.caption(f"🕒 Atualizado em {time.strftime('%d/%m/%Y %H:%M', time.localtime(data.mtime))}")
     if data_wf is not None:
         st.caption(f"👥 {os.path.basename(data_wf.path)}")
+    if data_emb is not None:
+        st.caption(f"🚢 {os.path.basename(data_emb.path)}")
 
     st.divider()
     st.markdown("**Filtros**")
@@ -602,7 +641,9 @@ def html_table(df: pd.DataFrame, right_cols=None):
         unsafe_allow_html=True,
     )
 
-tab1, tab2 = st.tabs(["📊 Performance Operacional", "👥 Recursos & Pessoas"])
+tab1, tab2, tab3 = st.tabs([
+    "📊 Performance Operacional", "👥 Recursos & Pessoas", "🚢 Escalas & Embarques",
+])
 
 with tab1:
     # --------------------------------------------------------------------------- #
@@ -956,6 +997,149 @@ with tab2:
         section_title("Recursos &amp; Pessoas", "")
         st.info("Aponte, na barra lateral, para o arquivo **Planejamento_Ativos_Status_*.xlsx** "
                 "(base de RH) para habilitar os indicadores de efetivo, turnover e certificações.")
+
+
+with tab3:
+    # --------------------------------------------------------------------------- #
+    # Escalas & Embarques — Dobras, AFI (folga) e Ociosidade/STB
+    # --------------------------------------------------------------------------- #
+
+    if data_emb is not None:
+        latest = data_emb.latest
+        section_title("Escalas &amp; Embarques", f"Ref.: {data_emb.mes_ref_label}")
+        st.caption("Base de eventos de escala — dobras (embarque extra), AFI (folga indenizada) e "
+                   "ociosidade/STB (aguardando embarque). Não é afetada pelos filtros da barra lateral.")
+
+        if latest:
+            embarcado = (latest["regulares"] or 0) + (latest["dobras"] or 0)
+            e1, e2, e3 = st.columns(3)
+            kpi_card(e1, "Efetivo no Mês", fmt0(latest["efetivo"]), " pessoas",
+                     f"{data_emb.mes_ref_label} · base de referência da escala", accent=NAVY)
+            kpi_card(e2, "Embarcado (Regular + Dobra)", fmt0(embarcado), " diárias",
+                     f"{fmt1p(latest['pct_reg_cap'])} de utilização vs. capacidade", accent=BLUE,
+                     bar_pct=latest["pct_reg_cap"])
+            kpi_card(e3, "Ociosidade / Standby", fmt0(latest["ociosidade"]), " diárias",
+                     f"{fmt1p(latest['pct_ociosidade'])} do total do mês — menor é melhor", accent=AMBER,
+                     bar_pct=latest["pct_ociosidade"])
+
+            e4, e5, e6 = st.columns(3)
+            kpi_card(e4, "Dobras (Embarque Extra)", fmt0(latest["dobras"]), " diárias",
+                     f"{fmt1p(latest['pct_dobras_hd'])} das diárias-homem do mês", accent=RED,
+                     bar_pct=min(1.0, latest["pct_dobras_hd"] * 5))
+            kpi_card(e5, "AFI (Folga Indenizada)", fmt0(latest["afi"]), " diárias",
+                     f"{fmt1p(latest['pct_afi_hd'])} das diárias-homem do mês", accent=GREEN,
+                     bar_pct=min(1.0, latest["pct_afi_hd"] * 5))
+            kpi_card(e6, "Funcionários com STB", fmt0(int(data_emb.pct_com_stb * data_emb.total_funcionarios)),
+                     " pessoas", f"{fmt1p(data_emb.pct_com_stb)} da base no período", accent=AMBER,
+                     bar_pct=data_emb.pct_com_stb)
+
+        m1, m2, m3 = st.columns(3)
+        with m1:
+            with panel("Evolução Mensal — Diárias × Ociosidade", "Total embarcado (regular + dobra) vs. standby, mês a mês"):
+                if not data_emb.monthly.empty:
+                    mo = data_emb.monthly
+                    fig = go.Figure()
+                    fig.add_scatter(x=mo["mes"], y=mo["total_diarias"], name="Diárias (total)",
+                                     mode="lines+markers", line=dict(color=BLUE, width=3))
+                    fig.add_scatter(x=mo["mes"], y=mo["ociosidade"], name="Ociosidade/STB",
+                                     mode="lines+markers", line=dict(color=AMBER, width=3))
+                    base_layout(fig, height=280)
+                    st.plotly_chart(fig, use_container_width=True, key="line_emb_mensal")
+                else:
+                    st.caption("Sem série mensal disponível.")
+        with m2:
+            with panel("Dobras × AFI por Mês", "Volume de embarque extra vs. folga indenizada, mês a mês"):
+                if not data_emb.monthly.empty:
+                    mo = data_emb.monthly
+                    fig = go.Figure()
+                    fig.add_bar(x=mo["mes"], y=mo["dobras"], name="Dobras", marker_color=RED)
+                    fig.add_bar(x=mo["mes"], y=mo["afi"], name="AFI", marker_color=GREEN)
+                    fig.update_layout(barmode="group")
+                    base_layout(fig, height=280)
+                    st.plotly_chart(fig, use_container_width=True, key="bar_emb_dobras_afi")
+                else:
+                    st.caption("Sem série mensal disponível.")
+        with m3:
+            with panel("Composição de Eventos", f"Mix do mês de referência ({data_emb.mes_ref_label})"):
+                if latest:
+                    labels = ["Regulares", "Dobras", "Ociosidade/STB", "AFI"]
+                    values = [latest["regulares"], latest["dobras"], latest["ociosidade"], latest["afi"]]
+                    fig = donut(labels, values, [BLUE, RED, AMBER, GREEN],
+                                center_title=fmt0(sum(values)), center_sub="diárias")
+                    st.plotly_chart(fig, use_container_width=True, key="donut_emb_mix")
+                else:
+                    st.caption("Sem dados do mês de referência.")
+
+        section_title("Concentração por Família de Função", "Dobras + AFI + Ociosidade acumulados no período")
+        with panel("", ""):
+            if not data_emb.por_familia.empty:
+                pf = data_emb.por_familia.sort_values("total", ascending=True)
+                fig = go.Figure()
+                fig.add_bar(y=pf["familia"], x=pf["dobras"], name="Dobras", orientation="h", marker_color=RED)
+                fig.add_bar(y=pf["familia"], x=pf["afi"], name="AFI", orientation="h", marker_color=GREEN)
+                fig.add_bar(y=pf["familia"], x=pf["ociosidade"], name="Ociosidade/STB", orientation="h", marker_color=AMBER)
+                fig.update_layout(barmode="stack")
+                base_layout(fig, height=320)
+                st.plotly_chart(fig, use_container_width=True, key="bar_emb_familia")
+            else:
+                st.caption("Sem dados de composição por família de função.")
+
+        t1, t2 = st.columns(2)
+        with t1:
+            with panel("Ranking — Maior Ociosidade/STB", "Top 15 funcionários, acumulado no período"):
+                top_o = data_emb.top_ociosidade
+                if not top_o.empty:
+                    show = top_o.rename(columns={"nome": "Nome", "funcao": "Função", "ociosidade": "STB (dias)",
+                                                   "pct_ociosidade": "% do HD"})
+                    html_table(show[["Nome", "Função", "STB (dias)", "% do HD"]], right_cols=["STB (dias)", "% do HD"])
+                else:
+                    st.caption("Sem funcionários com ociosidade registrada.")
+        with t2:
+            with panel("Ranking — Mais Dobras", "Top 15 funcionários com mais embarque extra, acumulado no período"):
+                top_d = data_emb.top_dobras
+                if not top_d.empty:
+                    show = top_d.rename(columns={"nome": "Nome", "funcao": "Função", "dobras": "Dobras",
+                                                   "pct_dobras_hd": "% do HD"})
+                    html_table(show[["Nome", "Função", "Dobras", "% do HD"]], right_cols=["Dobras", "% do HD"])
+                else:
+                    st.caption("Sem funcionários com dobra registrada.")
+
+        t3, t4 = st.columns(2)
+        with t3:
+            with panel("Ranking — Mais AFI (Folga Indenizada)", "Top 15 funcionários, acumulado no período"):
+                top_a = data_emb.top_afi
+                if not top_a.empty:
+                    show = top_a.rename(columns={"nome": "Nome", "funcao": "Função", "afi": "AFI",
+                                                   "pct_afi_hd": "% do HD"})
+                    html_table(show[["Nome", "Função", "AFI", "% do HD"]], right_cols=["AFI", "% do HD"])
+                else:
+                    st.caption("Sem funcionários com AFI registrada.")
+        with t4:
+            with panel("Observações da Liderança", "Justificativas registradas para dobras/AFI fora do padrão"):
+                obs = data_emb.observacoes
+                if not obs.empty:
+                    show = obs.rename(columns={"nome": "Nome", "evento": "Evento", "comentario": "Comentário"})
+                    html_table(show[["Nome", "Evento", "Comentário"]].head(12))
+                else:
+                    st.caption("Sem observações registradas nesta base.")
+
+        section_title("Base Completa — Escala por Funcionário", "Dobras, AFI e Ociosidade/STB acumulados no período")
+        with panel("", ""):
+            if not data_emb.workers.empty:
+                show = data_emb.workers.sort_values("ociosidade", ascending=False).head(50).rename(columns={
+                    "nome": "Nome", "funcao": "Função", "familia": "Família",
+                    "dobras": "Dobras", "afi": "AFI", "ociosidade": "Ociosidade/STB",
+                })
+                html_table(show[["Nome", "Função", "Família", "Dobras", "AFI", "Ociosidade/STB"]],
+                           right_cols=["Dobras", "AFI", "Ociosidade/STB"])
+                st.caption(f"Mostrando 50 de {data_emb.total_funcionarios} funcionários da base, "
+                           f"ordenados por Ociosidade/STB.")
+            else:
+                st.caption("Sem base de funcionários disponível.")
+    else:
+        section_title("Escalas &amp; Embarques", "")
+        st.info("Aponte, na barra lateral, para o arquivo **Relatório Mensal de Eventos*.xlsx** "
+                "(base de escalas) para habilitar os indicadores de dobras, AFI/folga e ociosidade/STB.")
 
 
 # --------------------------------------------------------------------------- #
