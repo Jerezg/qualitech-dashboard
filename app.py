@@ -691,6 +691,37 @@ with tab1:
     if filtered:
         util_delta += " · leitura consolidada (não varia por filtro)"
 
+    # Quebras "por Coordenador" e "por Cliente" (gráficos + tabelas mais
+    # abaixo) — recalculadas a partir das linhas de WO filtradas em vez das
+    # tabelas-resumo estáticas da planilha, para reagirem aos 4 filtros da
+    # barra lateral. Os totais batem exatamente com as tabelas-resumo
+    # quando não há filtro (mesma fonte, agregações diferentes).
+    _coord_cols = ["planejado", "programado", "real_prog", "real_acum", "lancado", "ajuste_mes"]
+    por_coord_show = data.por_coordenador if not filtered else (
+        wo.groupby("coord", as_index=False)[_coord_cols].sum() if not wo.empty
+        else pd.DataFrame(columns=["coord"] + _coord_cols)
+    )
+    por_cliente_show = data.por_cliente if not filtered else (
+        wo.groupby("cliente", as_index=False)[_coord_cols].sum() if not wo.empty
+        else pd.DataFrame(columns=["cliente"] + _coord_cols)
+    )
+
+    # Backlog e movimentação de clientes não vêm de linhas de WO (são abas
+    # à parte), mas cada um tem uma das dimensões filtráveis em comum —
+    # aplicamos um recorte (subconjunto de linhas) nessa dimensão.
+    backlog_show = data.backlog_coordenador if not (filtered and f_coord) else (
+        data.backlog_coordenador[data.backlog_coordenador["coord"].isin(f_coord)]
+    )
+    backlog_chart_note = " · filtrado por Coordenador" if (filtered and f_coord) else (
+        " · não filtra por Cliente/Tipo (só por Coordenador)" if filtered else ""
+    )
+    movimentacao_show = data.movimentacao_clientes if not (filtered and f_cliente) else (
+        data.movimentacao_clientes[data.movimentacao_clientes["cliente"].isin(f_cliente)]
+    )
+    movimentacao_note = " · filtrado por Cliente" if (filtered and f_cliente) else (
+        " · não filtra por Coordenador/Tipo (só por Cliente)" if filtered else ""
+    )
+
     por_tipo_wo = data.por_tipo_wo if not filtered else (
         wo["tipo_wo"].value_counts().rename_axis("tipo_wo").reset_index(name="n")
         .assign(pct=lambda d: d["n"] / d["n"].sum() if len(wo) else 0)
@@ -831,27 +862,28 @@ with tab1:
     pc1, pc2 = st.columns(2)
     with pc1:
         with panel("Real Acumulado por Coordenador", "Man-days efetivamente executados no mês, por coordenador responsável"):
-            if not data.por_coordenador.empty:
-                df = data.por_coordenador.sort_values("real_acum", ascending=True)
+            if not por_coord_show.empty:
+                df = por_coord_show.sort_values("real_acum", ascending=True)
                 fig = go.Figure(go.Bar(x=df["real_acum"], y=df["coord"], orientation="h", marker_color=BLUE))
                 base_layout(fig, height=300, legend=False)
                 st.plotly_chart(fig, use_container_width=True, key="coord_bar")
             else:
                 st.caption("Sem dados por coordenador.")
     with pc2:
-        with panel("Backlog de Logística por Coordenador", "Man-days programados ainda pendentes de lançamento (Ajuste_Mês)"):
-            if not data.backlog_coordenador.empty:
-                df = data.backlog_coordenador.sort_values("backlog_logistica", ascending=True)
+        with panel("Backlog de Logística por Coordenador",
+                    "Man-days programados ainda pendentes de lançamento (Ajuste_Mês)" + backlog_chart_note):
+            if not backlog_show.empty:
+                df = backlog_show.sort_values("backlog_logistica", ascending=True)
                 fig = go.Figure(go.Bar(x=df["backlog_logistica"], y=df["coord"], orientation="h", marker_color=RED))
                 base_layout(fig, height=300, legend=False)
                 st.plotly_chart(fig, use_container_width=True, key="backlog_bar")
             else:
-                st.caption("Sem dados de backlog.")
+                st.caption("Sem dados de backlog para os coordenadores selecionados.")
 
     section_title("Resumo Consolidado por Coordenador", "Tabela")
     with panel("", ""):
-        if not data.por_coordenador.empty:
-            show = data.por_coordenador.copy()
+        if not por_coord_show.empty:
+            show = por_coord_show.copy()
             show["% Avanço"] = (show["real_acum"] / show["real_prog"]).map(
                 lambda v: fmt1p(v) if pd.notna(v) and v != float("inf") else "—")
             show = show.rename(columns={"coord": "Coordenador", "planejado": "Planejado", "programado": "Programado",
@@ -869,8 +901,8 @@ with tab1:
     cl1, cl2 = st.columns(2)
     with cl1:
         with panel("Top Clientes — Man-days Realizados", 'Principais clientes por Real Acumulado no mês (demais agrupados em "Outros")'):
-            if not data.por_cliente.empty:
-                top = data.por_cliente.sort_values("real_acum", ascending=False)
+            if not por_cliente_show.empty:
+                top = por_cliente_show.sort_values("real_acum", ascending=False)
                 top8 = top.head(8)
                 outros_val = top.iloc[8:]["real_acum"].sum() if len(top) > 8 else 0
                 labels = top8["cliente"].tolist() + (["Outros"] if outros_val else [])
@@ -881,9 +913,10 @@ with tab1:
             else:
                 st.caption("Sem dados por cliente.")
     with cl2:
-        with panel("Movimentação de WOs por Cliente", "Ordens de serviço que entraram (+) e saíram (−) da carteira no período"):
-            if not data.movimentacao_clientes.empty:
-                m = data.movimentacao_clientes
+        with panel("Movimentação de WOs por Cliente",
+                    "Ordens de serviço que entraram (+) e saíram (−) da carteira no período" + movimentacao_note):
+            if not movimentacao_show.empty:
+                m = movimentacao_show
                 m = m[(m["entraram"] != 0) | (m["sairam"] != 0)]
                 if not m.empty:
                     fig = go.Figure()
@@ -917,8 +950,8 @@ with tab1:
 
     section_title("Resumo Consolidado por Cliente", "Tabela")
     with panel("", ""):
-        if not data.por_cliente.empty:
-            show = data.por_cliente.copy().sort_values("real_acum", ascending=False)
+        if not por_cliente_show.empty:
+            show = por_cliente_show.copy().sort_values("real_acum", ascending=False)
             show = show.rename(columns={"cliente": "Cliente", "planejado": "Planejado", "programado": "Programado",
                                          "real_prog": "Real+Prog", "real_acum": "Real Acum"})
             html_table(show[["Cliente", "Planejado", "Programado", "Real+Prog", "Real Acum"]],
