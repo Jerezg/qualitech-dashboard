@@ -650,10 +650,47 @@ with tab1:
     # Indicadores-chave (KPIs)
     # --------------------------------------------------------------------------- #
 
-    t = data.totais
+    # "Man-days Realizados" é recalculado a partir das próprias linhas de WO
+    # filtradas (wo já tem coord/cliente/tipo_wo/tipo por linha) — os totais
+    # batem exatamente com a tabela-resumo por coordenador quando não há
+    # filtro, então isso não muda o valor padrão, só passa a reagir aos 4
+    # filtros da barra lateral quando algum está ativo.
+    t = data.totais if not filtered else dict(
+        planejado=wo["planejado"].sum(), programado=wo["programado"].sum(),
+        real_prog=wo["real_prog"].sum(), real_acum=wo["real_acum"].sum(),
+    )
     n_wo = len(wo) if filtered else data.n_wo
     util, ocio, last_reading = data.pct_utilizacao_ociosidade
-    sispat = data.sispat_summary
+
+    # SISPAT vem de uma aba separada (cliente + plataforma) sem ligação
+    # direta às WOs — mas tem a coluna "cliente" em comum, então reage ao
+    # filtro de Cliente (não reage a Coordenador/Tipo, que não existem
+    # nessa aba da planilha).
+    if filtered and f_cliente and not data.sispat.empty:
+        sispat_rows = data.sispat[data.sispat["cliente"].isin(f_cliente)]
+        sim_n = int((sispat_rows["sispat"] == "Sim").sum())
+        nao_n = int((sispat_rows["sispat"] == "Não").sum())
+        sispat = dict(sim=sim_n, nao=nao_n, total=sim_n + nao_n)
+    else:
+        sispat = data.sispat_summary
+
+    # Backlog logístico só existe quebrado por Coordenador na planilha —
+    # reage a esse filtro especificamente; os demais filtros não têm como
+    # recortar esse indicador na fonte.
+    if filtered and f_coord and not data.backlog_coordenador.empty:
+        backlog_rows = data.backlog_coordenador[data.backlog_coordenador["coord"].isin(f_coord)]
+        pendente_show = float(backlog_rows["backlog_logistica"].sum())
+        backlog_delta = f"Filtrado · {len(f_coord)} coordenador(es) selecionado(s)"
+    else:
+        pendente_show = data.pendente_total
+        backlog_delta = f"Já lançado: {fmt0(data.lancado_total)} md"
+        if filtered:
+            backlog_delta += " · consolidado (filtra só por Coordenador)"
+
+    util_delta = f"Ociosidade: {fmt1p(ocio)}" if ocio is not None else "sem leitura"
+    if filtered:
+        util_delta += " · leitura consolidada (não varia por filtro)"
+
     por_tipo_wo = data.por_tipo_wo if not filtered else (
         wo["tipo_wo"].value_counts().rename_axis("tipo_wo").reset_index(name="n")
         .assign(pct=lambda d: d["n"] / d["n"].sum() if len(wo) else 0)
@@ -669,10 +706,9 @@ with tab1:
              f"{fmt1p(t['real_acum']/t['real_prog']) if t['real_prog'] else '—'} do previsto",
              accent=BLUE, bar_pct=(t["real_acum"]/t["real_prog"]) if t["real_prog"] else None)
     kpi_card(c2, "Utilização × Ociosidade", fmt1p(util) if util is not None else "—", "",
-             f"Ociosidade: {fmt1p(ocio)}" if ocio is not None else "sem leitura",
-             accent=BLUE, bar_pct=util)
-    kpi_card(c3, "Backlog Pendente", fmt0(data.pendente_total), " md",
-             f"Já lançado: {fmt0(data.lancado_total)} md", accent=AMBER)
+             util_delta, accent=BLUE, bar_pct=util)
+    kpi_card(c3, "Backlog Pendente", fmt0(pendente_show), " md",
+             backlog_delta, accent=AMBER)
     kpi_card(c4, "Conformidade SISPAT", fmt0p(sispat["sim"]/sispat["total"]) if sispat["total"] else "—", "",
              f"{sispat['sim']} de {sispat['total']} plataformas", accent=GREEN,
              bar_pct=(sispat["sim"]/sispat["total"]) if sispat["total"] else None)
